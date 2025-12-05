@@ -1,0 +1,15 @@
+# Ignore unnecessary folders
+My Music/
+My Pictures/
+My Videos/
+Visual Studio 2022/
+XuanZhi9/
+사용자 지정 Office 서식 파일/
+카카오톡 받은 파일/
+
+# Ignore system and config files
+desktop.ini
+AI.txt
+계정.txt
+낙서.md
+메모.md

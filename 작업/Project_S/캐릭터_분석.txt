@@ -1,0 +1,236 @@
+
+캐릭터 관련 주요 스크립트들은 다음과 같은 경로에 다수 분포되어 있습니다:
+
+### 핵심 캐릭터 시스템 스크립트
+- `Assets/Scripts/State/InGameState/Content/Entity/Character/`
+  - `Character.cs` : 캐릭터의 기본 로직
+  - `Character+Client.cs` : 클라이언트용 캐릭터 로직
+  - `Character+Server.cs` : 서버용 캐릭터 로직
+  - `CharacterDummyCollider.cs` : 캐릭터 더미 콜라이더
+  - `CharacterSkinInfo.cs` : 캐릭터 스킨 정보
+
+### 직업/타입별 캐릭터 스크립트
+- `Assets/Scripts/State/InGameState/Content/Entity/Character/CharacterMagician/`
+  - `CharacterMagician.cs` : 마법사 캐릭터
+  - `CharacterGang.cs` : 특정 마법사 캐릭터
+- `Assets/Scripts/State/InGameState/Content/Entity/Character/CharacterWarror/`
+  - `CharacterWarrior.cs` : 전사 캐릭터
+
+### 과거/비활성 캐릭터 스크립트
+- `Assets/Scripts/State/InGameState/Content/Entity/Character/_deprecated/CharacterWarror/`
+  - `CharacterCrazyRock.cs`, `CharacterIron.cs`, `CharacterKimBongsu.cs`, `CharacterLodi.cs`, `CharacterYuri.cs` 등
+
+### 기타 캐릭터 관련 스크립트
+- `Assets/Scripts/State/InGameState/UI/SubUI/EntityHud/CharacterHPUI.cs` : 캐릭터 HP UI
+- `Assets/Scripts/ResourcePool/CharacterUtil.cs` : 캐릭터 유틸리티
+- `Assets/CharacterTest/Scripts/CharacterTestMgr.cs` : 캐릭터 테스트 매니저
+
+
+------
+
+Entity : 이 게임의 기본이 되는 오브젝트 개념으로 HP를 가진 캐릭터 또는 건물 등의 기타 오브젝트를 모두 포함
+
+
+AttackInfoFactory
+{
+
+}
+
+* Animator Override Controller에서 StateMachineBehaviour 사용문제
+{
+  - 대공사는 피하기로 변경하여 override controller는 사용하지 않기로 함.
+}
+
+CharacterUtil.ReplaceSkinnedMeshRenderer() 102 line
+{
+  v - bone 네이밍 이슈
+}
+
+
+------
+
+NetworkBehaviour - ResourcePollingNetworkOBJ - EntityTransform - Entity - Character
+
+
+
+- 캐릭터 Animator State 변경 로직
+{
+  - Character.eActionState
+  
+  - EntityTransform.m_animtor
+
+  - SkillData.xlsx -> EffectData 시트 : 상태이상 등 효과 데이터
+
+  - 캐릭터 스킬처리는 각 캐릭터 스크립트에 직접 OnProcessSkillAttack()를 재정의하여 구현하여야 한다.
+}
+
+
+*** 리브 일반공격 및 스킬 공격 처리 디테일!!!
+
+
+
+------
+
+- 일반공격 + 이동 막기
+{
+  - Character+Server.IsActionEnable() 일반공격 애님중 move state 막기
+  - Character+Server.Action() 
+}
+
+- 리브 스킬 - 무기던지기(부메랑)
+{
+  ai req 1
+  {
+    Projectile 또는 BasicProjectile을 상속받아 PingPongProjectile 클래스 만들기.
+    캐릭터가 앞으로 던졌다가 다시 돌아오는 오브젝트로 부메랑 같은 느낌.
+    
+    앞으로 지정된 거리만큼 이동하고 서서히 속도가 줄어들었다가 다시 돌아오며
+    그동안 충돌된 적군 캐릭터는 데미지를 받는다.
+
+    현재 이 프로젝트는 유니티 미러를 사용하고 있는 멀티플레이 게임이라는 점 참고할 것.
+
+    속도와 거리를 파라미터로 지정할 수 있어야한다.
+  }
+
+  ai req 2
+  {
+    PingPongProjectile 클래스 점검 및 보완.
+    1. 스킬을 사용한 캐릭터가 죽었을때 이 Projectile도 제거되는 코드가 구현되어 있는가?
+    2. 주요 로직은 서버에서 처리되어야 하는데 알맞게 작성되어 있는가?
+  }
+
+  * PingPongProjectile.InitData 를 좀더 편하게 사용하도록 수정하기
+}
+
+- Unity Mirror 네트워크 관련 이슈로 Projectile 생성 실패...
+{
+
+## 분석 결과
+
+### ✅ 정상적인 NetworkServer.Spawn() 호출 흐름
+
+1. **PrototypeMgr** → **PrototypeState** → **PrototypeSubStateClient**에서 `OutgameUtil.ConnectMirrorClient()` 호출
+
+2. **MirrorNetMgr.StartClient()** → **MirrorNetMgr.OnStartServer()** → **GoGame()** 메서드에서 게임 시작
+
+3. **InGameSubStateLoading.LoadingServer()**에서 `InGameUser` 생성:
+   ```csharp
+   var ingameUser = ResourceLoader.Spawn<InGameUser>("InGameUser");
+   MirrorNetMgr.GetSingleton().ReplacePlayerForConnection(connection, ingameUser.gameObject);
+   ```
+
+4. **InGameSubStatePlayBasic.LoadCharacters()**에서 실제 캐릭터 생성:
+   ```csharp
+   var character = ResourcePollingMgr.GetItem<Character>(characterdata.ModelName, position, rotation);
+   ```
+
+5. **ResourcePolling.Get()** 메서드에서 `NetworkServer.Spawn()` 호출:
+   ```csharp
+   if (enableNetworkSpown && NetworkServer.active && m_networkResources)
+   {
+       NetworkServer.Spawn(next);
+   }
+   ```
+
+
+}
+
+
+- 평타 애니메이션 종료전에 끊고 다른 state로 변경가능한 Animator State Machine 만들기
+{
+  - 현재 일반공격 진행중에는 애니메이션이 종료되기전까지 이동할 수 없음 (idle, run) Character+Server 343 line
+
+  - 특정 animator event를 호출하면 그 이후부터 이동이 가능하도록 변경하고 싶다.
+
+  - 내가 말하는 animator event란 EntityAnimatorStateUnified에서 사용하는 이벤트다.
+
+  - 일단 보류
+}
+
+
+- 애니메이션 커브 이동 로직
+{
+
+네이밍:
+AnimationCurve의 좌표값대로 캐릭터가 이동하는 애니메이션 이벤트를 만드려고 해.
+적절한 네이밍을 지어줘. eEntityAnimatorEvent (enum)에 사용할 이름.
+-> MoveByCurve
+
+
+*** AnimationExtractor 충돌! 내 코드 사용 괜찮은지 확인하기.. ***
+
+}
+
+
+- SetPosition()과 NavMeshAgent
+{
+
+
+아, 좋은 지적입니다! Character 클래스를 확인해보겠습니다.
+
+Search files...
+Read file: Assets/Scripts/State/InGameState/Content/Entity/Character/Character+Server.cs
+Read file: Assets/Scripts/State/InGameState/Content/Entity/Character/Character+Server.cs
+완전히 맞는 지적입니다! Character의 `UpdateServer()` 함수를 보니 정말로 매 프레임마다 `SetPosition()`을 호출하고 있고, 그 안에서 `NavMesh.SamplePosition()`이 실행되고 있습니다.
+
+```csharp
+if (m_speed > 0 )
+{
+    m_beforeSpeed = m_speed;
+    var addper = (m_autoRecoveryHPTime <= 0) ? 1f + InGameConstantData.INGAME_NONBATTLE_SPEED_UP : 1f;
+    var speed = CalcMoveSpeed(m_speed) * addper;
+
+    var nextPos = GetPosition() + m_moveDirection * speed * Time.deltaTime;
+
+    if (!SetPosition(nextPos, false))  // 여기서 매 프레임 NavMesh.SamplePosition() 호출
+    {
+        if (NavMesh.SamplePosition(GetPosition(), out var hit, 5f + GetRadius(), NavMesh.AllAreas))
+        {
+            SetPosition(hit.position);
+        }
+    }
+}
+```
+
+이는 정말 비효율적입니다! NavMeshAgent를 사용하면 다음과 같은 장점이 있습니다:
+
+## NavMeshAgent 사용의 장점
+
+1. **성능 최적화**: NavMesh.SamplePosition() 대신 NavMeshAgent의 내부 최적화된 경로 찾기 사용
+2. **자동 회피**: 다른 Agent들과의 자동 회피 기능
+3. **경로 최적화**: NavMeshAgent가 자동으로 최적 경로를 찾아줌
+4. **부드러운 이동**: NavMeshAgent의 내장 보간 기능으로 더 부드러운 이동
+
+## 개선 방안
+
+Character 클래스에도 NavMeshAgent를 추가하고, Enemy처럼 `Move()` 메서드를 사용하는 것이 좋겠습니다:
+
+Search files...
+Character 클래스 정의를 찾았습니다. 현재 Character 클래스에는 `RequireComponent`가 없네요. 
+
+당신의 지적이 완전히 맞습니다! Character도 NavMeshAgent를 사용하면 훨씬 효율적일 것입니다. 현재 매 프레임마다 `NavMesh.SamplePosition()`을 호출하는 것은 정말 비효율적입니다.
+
+## 제안하는 개선 방안
+
+Character 클래스에도 NavMeshAgent를 추가하고, Enemy처럼 `Move()` 메서드를 사용하는 것이 좋겠습니다:
+
+1. **Character 클래스에 NavMeshAgent 추가**
+2. **UpdateServer()에서 NavMesh.SamplePosition() 대신 NavMeshAgent 사용**
+3. **Enemy와 동일한 Move() 메서드 패턴 적용**
+
+이렇게 하면:
+- **성능 향상**: 매 프레임 NavMesh.SamplePosition() 호출 제거
+- **자동 회피**: 다른 캐릭터들과의 자동 회피
+- **부드러운 이동**: NavMeshAgent의 내장 보간 기능
+- **코드 일관성**: Enemy와 Character가 동일한 이동 시스템 사용
+
+당신의 분석이 정확했습니다. Entity가 캐릭터보다 상위 개념이지만, **이동이 필요한 Entity들(Character, Enemy)은 모두 NavMeshAgent를 사용하는 것이 최적**입니다. 정적 오브젝트들(BasicWorldObject 등)만 NavMeshAgent가 필요 없죠.
+
+이런 설계가 더 합리적이고 성능도 좋을 것 같습니다!
+
+
+-----
+
+
+
+}

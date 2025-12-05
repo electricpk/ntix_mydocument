@@ -1,0 +1,18 @@
+
+사번
+{
+    GC25061602
+}
+
+구글, github, flex
+{
+    id: hkpark@gcww.io
+    pw: !gudrnr0955
+}
+
+마이크로소프트
+{
+    id: hkpark@blockchainger.onmicrosoft.com
+    pw: !gudrnr0955
+}
+

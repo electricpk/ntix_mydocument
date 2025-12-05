@@ -1,0 +1,200 @@
+
+인게임 UI
+{
+    prefab:
+        InGameBattleUI
+}
+
+전투관련 버튼
+{
+    prefab:
+        CharBasicControllUI
+    script:
+        CharacterControllUI
+}
+
+이동 조이스틱
+{
+    prefab:
+        Joystick FloatingType1
+        Joystick FloatingType2
+        
+    script:
+        VirtualJoystickFloating
+        VirtualJoystickFollowFloating
+}
+
+
+스킬 리팩토링
+{
+#250707
+    - CharacterStatsData.skill_id_1~3 을 배열로 변경하고 Character.m_skillInfo 또한 배열로 만들어서 스킬을 여러개 가질 수 있게하고
+     인덱스로 매칭될 수 있게 한다.
+
+    - 스킬버튼에 InGameSkillButton 클래스에 Serializable 인덱스 추가
+
+#250708
+    - entity.SkillInfo.Data → entity.CharacterStatsData.GetSkillData(m_skillIndex)로 변경
+
+    ## 주요 변경사항
+
+    1. **스킬 버튼 배열로 변경**: `m_skillButton` → `m_skillButtons[]`
+
+    2. **Awake() 메서드 수정**:
+    - 각 스킬 버튼의 위치를 개별적으로 저장하고 복원
+    - PlayerPrefs 키를 인덱스별로 구분 (`POS_SKILL_BTN_0`, `POS_SKILL_BTN_1` 등)
+
+    3. **Init() 메서드 수정**:
+    - 모든 스킬 버튼을 순회하며 초기화
+
+    4. **UpdateCoolTime() 메서드 수정**:
+    - 모든 스킬 버튼의 쿨타임을 업데이트
+
+    5. **IsSkillToolTip() 메서드 수정**:
+    - 모든 스킬 버튼의 툴팁 상태를 확인
+
+    6. **SetVisibleSkilButton() 메서드 수정**:
+    - 인덱스 기반으로 특정 스킬 버튼의 가시성 제어
+
+    7. **ModifyButtons() 메서드 수정**:
+    - 모든 스킬 버튼에 InGameButtonReSetting 컴포넌트 추가
+
+    8. **SaveButtons() 메서드 수정**:
+    - 각 스킬 버튼의 위치를 개별적으로 저장
+
+    9. **RevertButtons() 메서드 수정**:
+    - 각 스킬 버튼의 위치를 개별적으로 복원
+
+*****    10. **GetButtonObj() 메서드 수정**:
+        - Skill 타입일 때 첫 번째 스킬 버튼 반환 => 변경된 배열구조와 일단 맞지 않음. 현재 사용처는 튜토리얼밖에 없는듯.
+    
+}
+
+- 유저 스킬 버튼 흐름 문서 작성
+    Doc/스킬_시전_흐름_문서.md
+
+
+* Character.SkillInfo
+{
+    - 배열로 변경: 쿨타임 정보를 가지고 있기 때문에 하나로 사용할 수 없음. 스킬마다 따로따로 쿨타임 관리를 해야함.
+    
+    - 추가로 필요한 기능 -> 마지막 또는 지금 사용한 스킬 정보 가져오기 함수 필요.
+
+    - 기존에 무분별하게 m_skillInfo에 접근한 코드들을 마지막에 사용한 스킬정보 가져오기 함수로 변경하기
+
+
+ai req:
+니가 제안해준대로 진행하면서 추가 요청사항이 있어.
+마지막 또는 현재 사용중인 스킬에 대한 정보 가져오기 함수가 따로 필요해.
+그래서 다른 클래스에서 무분별하게 SkillInfo 프로퍼티로 접근했던 것들을 마지막 스킬정보 가져오기 함수로 대체까지 해줬으면 좋겠어.
+
+    ? : InitializeSkillArray() 하나의 스킬 슬롯만 생성?
+        Character+Server.ServerInit() 첫번째 스킬데이터만 설정?
+
+
+
+#250709
+    v 게임 시작시 두번째 스킬버튼의 위치 -> 2중 프리팹 구조에서 한가지 프리팹에서 위치를 조정해서 생긴 이슈
+    v 2번스킬의 Animator State가 Skill로 처리되는 부분  -> Character.InitAnimationName(), InGameUser.UpdateInput()
+    v SkillConfiguration 추가하기
+    v 스킬 두개 쿨타임 같이 도는 문제 -> InGameSkillButton.UpdateCoolTime() 스킬버튼 인덱스에 맞는 스킬만 쿨타임 계산되도록 변경함
+}
+
+
+- 스킬 히트영역 & 판정 개선
+{
+
+#250710
+
+    -히트 판정기 만들기
+
+    히트영역 종류
+    {
+        RectArea
+        SectorFromArea
+        CircleArea
+    }
+
+    ReacArea
+    {
+        Vector3 boxSize
+        float range
+    }
+
+    CircleArea
+    {
+        float radius
+    }
+
+    SectorFromArea
+    {
+        float radius
+        float angle
+    }
+
+    관련된 스크립트 만들었음!
+    AreaAttackHelper.cs 
+    AttackAreaDebugVisualizer.cs
+}
+
+
+- 스페셜 스킬 키보드 적용 (Input System)
+{
+
+ai req:
+    현재 플레이어가 스킬을 사용할 수 있는 방식이 두가지가 있어.
+    하나는 ui 버튼 터치, 하나는 키보드 버튼 입력.
+    키보드는 Input System을 이용중인데도 불구하고 서로 처리방식이 약간 차이가 있어서 문제가 있어.
+    현재는 ui 버튼 터치로 스킬을 시전했을때 더 알맞은 처리가 되고 있어. 최근에 리펙토링을 그쪽 기반으로 했거든.
+    ui 버튼 터치는 InGameSkillButton.OnPointerDown() 함수가 호출되고 있고
+    키보드로 스킬 사용은 InGameUser.Update()에서 눌렸는지 체크하면서 시작되고 있어.
+    
+    일단 이렇게 입력이 달라도 구조적으로 최대한 동일한 방식으로 처리가 되었으면 좋겠어.
+    어떻게 수정하는게 좋을까?
+
+InputSystem (SlimeAction?) 으로 처리함: UI스킬버튼에 Keyboard버튼 Num2 직접 적용
+
+}
+
+
+- 스페셜 스킬 리뉴얼
+{
+    ** 스페셜 스킬 메니저 클래스 만드는 것이 좋을듯.
+
+    - 스페셜 스킬 게이지 (버튼?)
+    {
+        Character 클래스의 m_mp 아래에...
+        Character+Server 에서 관리되는 멤버변수로 [SyncVar]float 스페셜스킬게이지 만들기.
+        버튼 fill amount에 값 적용.
+
+        최대치 되면 버튼 활성화, 활성화 이펙트 등 연출
+    }
+
+    - 적군 처치 시 스페셜 포인트 획득
+    {
+        Entity+Server.OnServerEntityDie()
+    }
+
+    - 기타 연출 (라벨?)
+    {
+        추후 다른 연출과 중복 되는 문제 예방을 위하여 인게임UI연출 관리 시스템 필요.
+    }
+
+    - 스킬 애니메이션
+    {
+        루프 애니메이션 일정 시간 재생, 스테이트 트랜지션.
+            -> 멀티에서 잘 되는지?
+
+        스킬중 이동 : Move State. 구조 변경 어려워서 일단 MoveState에서 이동..
+
+        End에도 스킬id가 들어가야만 공격판정 가능
+    }
+
+
+    - 스페셜스킬 라벨연출
+    {
+        Assets/Resources/Bundles/deprecated/UI/InGame/UltimateSkillCut_01.prefab
+
+        -> Character+Client.cs RpcOnStartSpecialSkill()
+    }
+}

@@ -1,0 +1,445 @@
+
+멀티플레이 전투 이슈
+{
+    v 호스트 아닌 클라이언트는 피격 카메라쉐이크 미발동
+    
+    - 타플레이어 애니메이션 이벤트 일부 발동
+    {
+        - 카메라 fov
+        - 스페셜스킬 포스트프로세스 흑백 연출
+    }
+
+    기타이슈
+    {
+        - 평타에 있는 경직 리액션으로 스킬이 끊기는 문제
+        - 스페셜스킬은 무적이여야 될지도?
+    }
+}
+
+
+레이턴시 관련
+{
+
+    애니메이션 관련 액션
+    {
+        클라 입력
+        클라 액션 -> 서버 액션 전송
+        서버 액션 도착 -> 지연시간만큼 더해서 애니메이션 시작 (공격판정 이슈?) -> 클라 응답 전송
+        클라 응답 도착 : 검증 ? 큰 차이 발생시 서버에 맞춤
+    }
+
+    이동
+    {
+        클라 입력
+        클라 이동 액션 -> 서버 액션 전송
+    }
+
+}
+
+---
+
+캐릭터 리펙토링을 위한 Character2
+{
+    Character2 클래스를 만들어줘. 이 클래스는 Character 클래스랑 완전히 동일하게 만들어줘야돼.
+    이름만 Character2 가 되는거야.
+    그런데 주의사항이 있어. 이 클래스는 parcial 클래스야. 내가 알기로는 총 4개의 cs 파일로 구성되어 있어.
+
+    Character.cs
+    Character+Client.cs
+    Character+Server.cs
+    Character+Cheat.cs
+
+    이렇게 4개로 되어있는걸로 알고 있어.
+    새로만들 Character2도 똑같은 구성으로 만들어줘.
+
+    Character2 클래스의 목적은 나름 큰 규모의 리팩토링을 위해서야.
+    리팩토링을 안전하게 마치고나서 기존 Character로 덮어씌울 생각이야.
+    자, 이제 Character2 클래스를 만들어줘. 4개의 파일로 만들어주는거 잊지말고.
+}
+
+
+----
+
+#250731
+이제 가장 중요한 작업을 해야해.
+
+해결해야할 문제점: 멀티플레이시 레이턴시가 어느정도 있을경우 플레이어의 조작감이 떨어지는 문제.
+    (우리 프로젝트는 모바일게임이기 때문에 레이턴시는 어느정도 있을 수 밖에 없음)
+
+해결 방안: 기존의 서버중심 액션 시스템에서 클라중심 액션 시스템으로의 변경.
+
+
+구현 계획:
+
+액션을 시작할 수 있는 함수를 총 2가지로 만든다. (StartActionFromClient(), StartActionFromServer())
+플레이어 캐릭터인 경우는 입력을 받았을때 StartActionFromClient()로 액션을 시작한다.
+아래는 대략적인 코드 계획이다.
+
+    // 플레이어의 입력으로 인해 클라이언트에서 시작되는 액션 함수
+    [Client]
+    public virtual void StartActionFromClient(Character.ActionInfo actionInfo)
+    {
+        actionInfo.startTime = NetworkTime.time;    // ActionInfo 구조체에 미러의 NetworkTime.time 을 담을 수 있는 startTime 필드를 추가한다.
+        ActionHandler.Execute(actionInfo) // 클라이언트에서 액션 바로 실행
+        CmdActionToServer(actionInfo);  // 서버로 액션정보를 보냄
+    }
+
+    // 서버에서 시작되는 액션 함수
+    [Server]
+    public virtual void StartActionFromServer(Character.ActionInfo actionInfo)
+    {
+        actionInfo.startTime = NetworkTime.time;    // 액션 시작 시간
+        ServerAction(actionInfo, true);
+    }
+
+    protected virtual void Action2(Character.ActionInfo actionInfo)
+    {
+        Debug.Log($"Action: {actionInfo.state}");
+    }
+
+    // 클라이언트 -> 서버 (액션전송)
+    [Command]
+    protected virtual void CmdActionToServer(Character.ActionInfo actionInfo)
+    {
+        ServerAction(actionInfo, false);
+    }
+
+    // 서버에서는 검증을 거친 후 액션 실행
+    [Server]
+    protected virtual void ServerAction(Character.ActionInfo actionInfo, bool fromServer)
+    {
+        if (ValidateServerAction(actionInfo))
+        {
+            ActionHandler.Execute(actionInfo) // 서버에서도 액션실행
+            RpcOnSuccessValidateAction(actionInfo, fromServer);
+        }
+        else
+        {
+            // 유효성 검사 실패!
+            RpcOnFailValidateAction(actionInfo, fromServer);
+        }
+    }
+
+    // 서버검증. (클라이언트 핵 방지 등)
+    protected virtual bool ValidateServerAction(Character.ActionInfo actionInfo)
+    {
+        // 각 액션마다 검증코드 구현필요. 추후 작업예정.
+        return true;
+    }
+
+    // 검증 성공시 클라이언트로 전송
+    [ClientRpc]
+    protected virtual void RpcOnSuccessValidateAction(Character.ActionInfo actionInfo, bool fromServer)
+    {
+        if (fromServer) // 서버로 시작한 액션인 경우 클라이언트는 액션을 아직 실행하지 않고 있다.
+        {
+            ActionHandler.Execute(actionInfo) // 클라이언트에서 액션 바로 실행
+        }
+        else
+        {
+            // 처리할 것이 있으면 처리.
+        }
+    }
+
+    // 검증 실패히 클라이언트로 전송
+    [ClientRpc]
+    protected virtual void RpcOnFailValidateAction(Character.ActionInfo actionInfo, bool fromServer)
+    {
+        // 핵 또는 문제 있는 상태로.. 추후 작업예정.
+    }
+
+----
+
+이런 흐름으로 변경하려고 계획하고 있어.
+ActionInfo에 startTime이 추가되었는데 ActionHandler에서 액션을 실행하고 애니메이션을 재생할때 오차시간만큼 애니메이션을 앞부분을 스킵시키는 작업도 필요해.
+
+너는 내 계획을 이해했을까?
+
+----
+
+#250801
+얼마전에 액션 시스템들을 서버중심에서 클라이언트 중심적으로 변경했어.
+그거에 맞춰서 캐릭터 이동로직도 클라이언트 중심적으로 변경해야해.
+아마 캐릭터 이동로직은 서버중심적으로 되어 있을거야.
+
+그래서 일단 현재 구현되어 있는 우리 프로젝트의 캐릭터 이동 로직에 대해서 분석해줘.
+그 후, 어떻게 변경하는게 좋을지도 나한테 좋은 방법으로 제안 부탁해.
+
+분석하려면 Character.cs, Character+Server.cs, Character+Client.cs 이런 캐릭터 클래스들을 확인해야하고
+InGameUser.cs 쪽에서 플레이어의 조작관련된 코드가 있으면 저 부분도 보면 좋을거야.
+
+
+----
+
+// move update
+if (IsDie == false)
+{
+    if (m_speed > 0 )
+    {
+        m_beforeSpeed = m_speed;
+        var addper = (m_autoRecoveryHPTime <= 0) ? 1f + InGameConstantData.INGAME_NONBATTLE_SPEED_UP : 1f;
+        var speed = CalcMoveSpeed(m_speed) * addper;
+
+        MoveByDirection(m_moveDirection, speed);
+    }
+    else
+    {
+        m_beforeSpeed = 0;
+    }
+
+    m_animator.SetFloat(SPEED_PARAMETOR_NAME, m_speed);
+}
+
+
+----
+
+#250805
+
+Character+Action 에 ValidateServerAction() 이라는 메서드가 있어.
+여기는 통합적인 검증을 하는걸로 하고 각 액션 핸들러마다 검증을 하는 메서드를 만들어줬으면 해.
+각 액션마다 검증하는 코드가 다를 수 있잖아. 오케이?
+
+----
+
+클라이언트 사이드 액션 시스템으로 개편하면서 캐릭터 이동 동기화 로직이
+현재 그냥 클라이언트 위치값으로 동기화 하고 있을거야.
+이제 서버에서 위치 검증을 제대로 만들어야해.
+
+일반적으로 캐릭터의 위치가 변경되는 경우는
+- 플레이어의 이동키 입력 (EntityTransform.MoveByDirection())
+- 일반공격에서 eEntityAnimatorEvent.ForceMove 이벤트
+- 스킬 사용시 EntityTransform.MoveByCurves() (내부적으로 (EntityTransform.MoveByDirection()))
+- 피격시 에어본이나 넉백 등으로 인하여 위치가 변하는 경우
+
+이정도가 있어. (더 있을 수 있음)
+
+아직 정리가 덜 됐지만 대부분의 이동로직의 내부 코드는 
+EntityTransform 의 MoveByDirection()과 SetPosition()으로 통일시킬 예정이야.
+
+이정도 정보를 참고해서 너가 캐릭터 위치 서버 검증 시스템을 제안해줘.
+
+일단 내가 바라는 건, 너무 코드가 크게 변경되지 않는걸 원하고 있어.
+하지만 니가 생각했을때 괜찮은 거를 추천해줘도 좋아.
+
+----
+
+    public enum eMoveType
+    {
+        Unknown,
+        Move,
+        SkillMoveByCurve,
+        AnimatorForceMoveEvent,
+        ReactionMove,
+    }
+
+    protected void CmdMoveValidate()
+    {
+
+    }
+
+----
+
+EntityTransform.MoveByDirection() 이라는 메서드가 있어.
+내용은 결국 트랜스폼 포지션을 특정 방향으로 속도에 맞게 이동시키는 거야.
+이거랑 아주 유사한 메서드가 필요해.
+근데 새로 만들 메서드는 트랜스폼으로 하는게 아니고 오로지 Vector3 포지션으로만 하는거야.
+기준 포지션은 m_positionByServer 이 멤버변수야.
+이 메서드를 91번째줄 Here!!! 위치에 만들어줄래?
+
+----
+
+
+ReactiveProperty<bool> isJustMove = new();
+
+void Awake()
+{
+    isJustMove.Subscribe()
+}
+
+void Update()
+{
+    isJustMove.Value = 
+        m_currentAction == Move && 
+        (IsPlaying(idle) || IsPlaying(run));
+}
+
+----
+
+GetMaxDistance() 메서드를 구현해줘.
+
+_snapshotList 에는 시간값과 스피드값이 들어있어.
+스피드가 변경될때마다 스냅샷을 기록했어.
+이동은 기본적으로 EntityTransform.MoveByDirection() 을 이용해서 이동시키니까
+참고해서 총 진행시간동안 최대 얼만큼의 거리를 이동할 수 있는지 값을 구하는 메서드를 완성해줘.
+
+
+----
+
+
+호스트플레이어(A), 타 클라이언트 플레이어(B) 가 있어.
+A의 화면에서 B캐릭터는 idle과 run 애니메이션이 정상적으로 나와.
+그런데 B의 화면에서 A캐릭터는 run 애니메이션이 나오지 않아. idle 상태에서 움직여.
+
+참고로 run 애니메이션은 애니메이션 스테이트를 바꾸지 않고 애니메이터의 speed 파라미터 값에 의해서
+바뀌는걸로 알고 있어.
+
+종합하자면 애니메이터에 파라미터값 적용을 하지 않았을수도 있겠네.
+너가 어디가 문제여서 한쪽만 정상적으로 나오는건지 좀 찾아줄래?
+
+----
+
+#250807
+호스트와 일반클라의 이동속도가 다른 이슈: 
+    비전투상태일때 이속증가를 담당하는 멤버변수가 SyncVar가 등록되어 있지 않아서
+    클라쪽에서는 비전투 이속증가를 받지 못하는 문제가 있었음
+
+로그
+{
+    *호스트 플레이어의 로그
+    [MoveValidator 상세][userSeq:778] 검증결과: 통과 (서버/Authority)
+    스냅샷 개수: 2개
+    총 시간: 4.354초 (NetworkTime 기준)
+    총 이동거리: 24.62
+    최대 허용거리: 26.95
+    속도 정보 - 평균:3.75 최대:5.00 최소:2.50
+    실제 평균속도: 5.65 (설정 평균 대비 50.8%)
+    시간 동기화 - NetworkTime차이:0.000s UnityTime:19.338s
+    현재 FPS: 74.5
+    시작위치: (31.86, 15.65, 10.62)
+    종료위치: (38.21, 15.65, 34.40)
+
+
+    ----
+
+    *일반 클라이언트 플레이어의 로그
+    [MoveValidator 상세][userSeq:779] 검증결과: 통과 (서버/NonAuthority)
+    스냅샷 개수: 2개
+    총 시간: 4.420초 (NetworkTime 기준)
+    총 이동거리: 21.94
+    최대 허용거리: 27.31
+    속도 정보 - 평균:3.75 최대:5.00 최소:2.50
+    실제 평균속도: 4.96 (설정 평균 대비 32.4%)
+    시간 동기화 - NetworkTime차이:0.000s UnityTime:29.060s
+    현재 FPS: 60.8
+    시작위치: (48.32, 15.65, 71.31)
+    종료위치: (44.05, 15.65, 49.80)
+
+
+    ----
+
+
+    *호스트 플레이어의 로그
+    [MoveValidator 상세][userSeq:778] 검증결과: 통과 (서버/Authority/Host)
+    플레이어 타입: 로컬플레이어
+    스냅샷 개수: 4개
+    총 시간: 5.196초 (NetworkTime 기준)
+    총 이동거리: 29.67
+    최대 허용거리: 35.70
+    속도 정보 - 평균:4.63 최대:6.00 최소:2.50
+    실제 평균속도: 5.71 (설정 평균 대비 23.5%)
+    시간 동기화 - NetworkTime차이:0.000s UnityTime:141.560s
+    현재 FPS: 83.1
+    시작위치: (31.90, 15.65, 28.40)
+    종료위치: (39.23, 15.65, 57.15)
+    [구간별 상세]
+    구간1: 시간(0.000s) 거리(0.00) 속도(0.00) 설정속도(5.00) 예상거리(0.00) 속도차이(-5.00)
+    구간2: 시간(1.447s) 거리(7.25) 속도(5.01) 설정속도(5.00) 예상거리(7.24) 속도차이(0.01)
+    구간3: 시간(3.748s) 거리(22.43) 속도(5.98) 설정속도(6.00) 예상거리(22.49) 속도차이(-0.02)
+
+
+
+    *일반 클라이언트 플레이어의 로그
+    [MoveValidator 상세][userSeq:779] 검증결과: 통과 (서버/NonAuthority/Client)
+    플레이어 타입: 원격플레이어
+    스냅샷 개수: 4개
+    총 시간: 4.827초 (NetworkTime 기준)
+    총 이동거리: 24.07
+    최대 허용거리: 33.28
+    속도 정보 - 평균:4.63 최대:6.00 최소:2.50
+    실제 평균속도: 4.99 (설정 평균 대비 7.8%)
+    시간 동기화 - NetworkTime차이:0.000s UnityTime:115.413s
+    현재 FPS: 88.5
+    시작위치: (51.43, 15.65, 58.58)
+    종료위치: (46.56, 15.65, 35.01)
+    [구간별 상세]
+    구간1: 시간(0.000s) 거리(0.00) 속도(0.00) 설정속도(5.00) 예상거리(0.00) 속도차이(-5.00)
+    구간2: 시간(1.434s) 거리(6.94) 속도(4.84) 설정속도(5.00) 예상거리(7.17) 속도차이(-0.16)
+    구간3: 시간(3.394s) 거리(17.14) 속도(5.05) 설정속도(6.00) 예상거리(20.36) 속도차이(-0.95)
+
+
+    총 시간은 내가 직접 조작한 시간이라서 다를 수 밖에 없어.
+    로그를 계속해서 분석해줘봐. 과연 문제가 뭘까?
+}
+
+
+----
+
+* 콤보시스템 클라사이드 시스템으로 개편
+{
+    - 최대한 기존 코드 유지 (수정 최소화)
+    - 클라 단독으로도 동작이 가능하도록 최소한의 수정
+    - 액션 시스템과 연동하여 서버에서 검증하고 이상없으면 서버도 따라감
+}
+
+
+콤보시스템도 레이턴시가 있는 상황에서도 빠른 반응성을 얻기 위해서 
+다른 액션들처럼 클라이언트 중심적으로 진행이 되어야해.
+하지만 이번 리펙토링작업에서는 최소한의 수정으로 하고자해.
+
+작업 순서는..
+1. 클라이언트 단독으로도 동작이 가능하도록 변경. 단, 수정 최소화.
+2. 액션시스템의 흐름과 비슷하게 클라이언트에서 공격시작시 즉시 실행하고 서버로 정보를 전달,
+ 서버에서는 검증 완료 후 클라이언트와 맞춰서 따라감. (서버는 미러의 NetworkTime을 통해서 타이밍을 맞춘후 동일한 시스템 실행)
+
+즉, 단독실행이 가능하도록 변경된 콤보시스템을 클라와 서버 각각 실행하는거지.
+
+이 작업을 진행해줘.
+
+----
+
+
+테스트 해보니 몇가지 문제가 있어.
+1. 애니메이션 속도가 느려졌다.
+ -> 기존에는 EntityAnimatorStateUnified (애니메이터 이벤트)로 인해서 애니메이션 재생속도를 따로 설정해놓은게 있고
+    그걸로 인해서 애니메이션을 전체적으로 빠르게 해놨는데, 지금은 적용이 안되고 있는거 같아. 느려졌어.
+
+2. 콤보 입력타이밍 문제. 
+ -> 기존에는 콤보 예약 시스템으로 인해서 조금 늦게 입력해도 발동되는 기능이 있었지만 지금은 빨리 연타하지 않는이상
+    콤보가 실행되지 않는다.
+
+3. 콤보공격 끝나고 다시 시작이 잘 안됨.
+ -> 기존에는 콤보공격이 끝나도 금방 다시 재시작이 가능했음. 현재 콤보공격은 3타로 구성되어 있음.
+    3타 이후에도 다시 일반공격을 하면 금방 다시 새로운 콤보가 시작됐었는데 지금은 엄청 오랫동안 재시작이 안되고 무반응이다.
+
+하나씩 차근차근 문제를 확실하게 해결해줘. 결구 기존과 동일하게 잘 실행되어야 해.
+
+
+----
+
+
+
+
+클라 콤보시작 -> 서버검증 -> 서버콤보시작 -> RPC콤보시작
+
+현재 이 구조를 사용중이야. 이 상황에서는 중복실행이 발생할 수 밖에 없어.
+
+클라이자 서버인 호스트 유저는 원래 3번호출이 되겠지만
+RPC콤보시작단계에 isClientOnly 조건을 넣었어. 그래서 호스트 두번.
+
+일반 클라유저는
+클라콤보시작에서 1번, RPC콤보시작에서 1번해서 총 두번.
+
+각각 중복실행 안되게 해줘. 최대한 간단하게.. 코드가 복잡해지고 뭐가 많이 추가되는게 싫어.
+
+
+
+----
+
+액션 시스템에서 추가하고 싶은 기능이 있어.
+각 액션핸들러에 UpdateAction() 대충 이런류의 이름의 메서드를 추가하고
+해당 액션이 실행되고 있을때 캐릭터의 Update()에서 호출했으면 해.
+해당 액션이 실행되고 있을때 매 프레임마다 호출되는 메서드가 하나 있었으면 하는거지.
+그거를 현재 액션시스템 구조에 맞게 interface를 활용해서 추가해줘.
+
+----
+
