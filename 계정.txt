@@ -16,3 +16,8 @@
     pw: !gudrnr0955
 }
 
+Claude Code
+{
+    id: gc_dev@gcww.io
+    pw: gc123!@#[]
+}
